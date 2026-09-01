@@ -91,9 +91,9 @@ def _normalize_text(value: Any) -> str:
 
 def normalize_phone_number(value: Any) -> str:
     digits = re.sub(r"\D", "", _normalize_text(value))
+    if len(digits) > 10 and digits.startswith("1"):
+        digits = digits[1:]
     if len(digits) == 10:
-        return "1" + digits
-    if len(digits) == 11 and digits.startswith("1"):
         return digits
     raise ValidationError("phone_number", "not a valid 10-digit U.S. phone number")
 

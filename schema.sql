@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS public.patients (
     last_name TEXT NOT NULL CHECK (char_length(trim(last_name)) BETWEEN 1 AND 50),
     date_of_birth DATE NOT NULL CHECK (date_of_birth <= CURRENT_DATE),
     sex TEXT NOT NULL CHECK (sex IN ('Male', 'Female', 'Other', 'Decline to Answer')),
-    phone_number TEXT NOT NULL CHECK (phone_number ~ '^1[0-9]{10}$'),
+    phone_number TEXT NOT NULL CHECK (phone_number ~ '^[0-9]{10}$'),
     email TEXT NULL CHECK (email IS NULL OR email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'),
     address_line_1 TEXT NOT NULL CHECK (char_length(trim(address_line_1)) > 0),
     address_line_2 TEXT NULL,

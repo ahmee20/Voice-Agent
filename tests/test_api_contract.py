@@ -31,11 +31,11 @@ def test_get_patient_bad_uuid_returns_400_and_envelope():
     assert payload["error"] is not None
 
 
-def test_phone_number_is_normalized_with_country_code():
+def test_phone_number_is_normalized_by_removing_leading_one_when_needed():
     from validation import normalize_phone_number
 
-    assert normalize_phone_number("2234567899") == "12234567899"
-    assert normalize_phone_number("12234567899") == "12234567899"
+    assert normalize_phone_number("2234567899") == "2234567899"
+    assert normalize_phone_number("12234567899") == "2234567899"
 
 
 def test_create_patient_invalid_input_returns_422_and_envelope():
