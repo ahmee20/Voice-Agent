@@ -163,9 +163,20 @@ def normalize_date_of_birth(value: Any) -> str:
     else:
         raw = _normalize_text(value)
         try:
-            parsed = date.fromisoformat(raw)
-        except ValueError as exc:
-            raise ValidationError("date_of_birth", "is not a real date") from exc
+            if "T" in raw or " " in raw:
+                iso_like = raw.replace("Z", "+00:00")
+                parsed = datetime.fromisoformat(iso_like).date()
+            else:
+                parsed = date.fromisoformat(raw)
+        except ValueError:
+            for fmt in ("%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y", "%d-%m-%Y", "%B %d, %Y", "%b %d, %Y"):
+                try:
+                    parsed = datetime.strptime(raw, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise ValidationError("date_of_birth", "is not a real date")
 
     if parsed > date.today():
         raise ValidationError("date_of_birth", "is in the future and can't be saved")
