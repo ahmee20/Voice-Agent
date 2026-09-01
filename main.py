@@ -17,13 +17,14 @@ from fastapi.staticfiles import StaticFiles
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+from db import fetch_patient_by_phone as db_fetch_patient_by_phone
 from db import list_patients as db_list_patients
 from db import fetch_patient_by_id as db_fetch_patient_by_id
 from db import insert_patient as db_insert_patient
 from db import soft_delete_patient as db_soft_delete_patient
 from db import update_patient as db_update_patient
 from tools import check_existing_patient, create_patient, update_patient
-from validation import ValidationError, build_update_payload, canonicalize_field_names, normalize_patient_data
+from validation import ValidationError, build_update_payload, canonicalize_field_names, normalize_patient_data, normalize_phone_number
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("carecloud.webhook")
@@ -137,6 +138,32 @@ async def create_patient_route(request: Request):
         cleaned, errors = normalize_patient_data(payload, partial=False)
         if errors:
             raise HTTPException(status_code=422, detail=errors[0])
+
+        phone_number = normalize_phone_number(cleaned["phone_number"])
+        cleaned["phone_number"] = phone_number
+
+        existing_rows = await db_fetch_patient_by_phone(phone_number)
+        if existing_rows:
+            existing = existing_rows[0]
+            merged = dict(existing)
+            for key, value in cleaned.items():
+                if key in {"patient_id", "created_at", "updated_at", "deleted_at"}:
+                    continue
+                if value is None:
+                    continue
+                merged[key] = value
+
+            merged["partial_info"] = bool(payload.get("partial_info", False)) or bool(existing.get("partial_info", False))
+            merged["updated_at"] = _utc_now_iso()
+
+            changed = any(existing.get(key) != value for key, value in merged.items() if key not in {"patient_id", "created_at", "deleted_at", "updated_at"})
+            if not changed:
+                return api_response(data=existing, status_code=200)
+
+            updates = {k: v for k, v in merged.items() if k not in {"patient_id", "created_at", "deleted_at"}}
+            updated = await db_update_patient(existing["patient_id"], updates)
+            return api_response(data=updated, status_code=200)
+
         cleaned["patient_id"] = str(uuid.uuid4())
         cleaned["created_at"] = _utc_now_iso()
         cleaned["updated_at"] = _utc_now_iso()

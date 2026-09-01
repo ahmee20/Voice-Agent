@@ -157,3 +157,150 @@ def test_create_patient_keeps_first_matching_record_without_deleting_any(monkeyp
     result = asyncio.run(run())
     assert result["status"] == "updated"
     assert result["patient"]["patient_id"] == "primary-id"
+
+
+def test_create_patient_route_upserts_by_phone_without_duplicate_insert(monkeypatch):
+    import main
+
+    async def fake_fetch_patient_by_phone(phone_number):
+        return [{
+            "patient_id": "existing-id",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": phone_number,
+            "email": "old@example.com",
+            "address_line_1": "123 Main St",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        }]
+
+    async def fake_update_patient(patient_id, payload):
+        assert patient_id == "existing-id"
+        return {"patient_id": patient_id, **payload}
+
+    async def fake_insert_patient(payload):
+        raise AssertionError("UI create route should not insert a duplicate row")
+
+    monkeypatch.setattr(main, "db_fetch_patient_by_phone", fake_fetch_patient_by_phone)
+    monkeypatch.setattr(main, "db_update_patient", fake_update_patient)
+    monkeypatch.setattr(main, "db_insert_patient", fake_insert_patient)
+
+    response = client.post(
+        "/patients",
+        json={
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": "2234567899",
+            "email": "new@example.com",
+            "address_line_1": "456 Oak Ave",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["patient_id"] == "existing-id"
+    assert payload["data"]["email"] == "new@example.com"
+
+
+def test_create_patient_noops_when_existing_record_is_the_same(monkeypatch):
+    import tools
+
+    async def fake_fetch_patient_by_phone(phone_number):
+        return [{
+            "patient_id": "primary-id",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": phone_number,
+            "email": "jane@example.com",
+            "address_line_1": "123 Main St",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        }]
+
+    async def fake_update_patient_record(patient_id, payload):
+        raise AssertionError("same record should not update")
+
+    monkeypatch.setattr(tools, "fetch_patient_by_phone", fake_fetch_patient_by_phone)
+    monkeypatch.setattr(tools, "update_patient_record", fake_update_patient_record)
+    monkeypatch.setattr(tools, "insert_patient", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("same record should not insert")))
+
+    async def run():
+        return await tools.create_patient({
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": "2234567899",
+            "email": "jane@example.com",
+            "address_line_1": "123 Main St",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        })
+
+    result = asyncio.run(run())
+    assert result["status"] == "unchanged"
+    assert result["patient"]["patient_id"] == "primary-id"
+
+
+def test_create_patient_replaces_different_existing_record_values(monkeypatch):
+    import tools
+
+    async def fake_fetch_patient_by_phone(phone_number):
+        return [{
+            "patient_id": "primary-id",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": phone_number,
+            "email": "old@example.com",
+            "address_line_1": "123 Main St",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        }]
+
+    async def fake_update_patient_record(patient_id, payload):
+        return {"patient_id": patient_id, **payload}
+
+    monkeypatch.setattr(tools, "fetch_patient_by_phone", fake_fetch_patient_by_phone)
+    monkeypatch.setattr(tools, "update_patient_record", fake_update_patient_record)
+    monkeypatch.setattr(tools, "insert_patient", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("different record should not insert")))
+
+    async def run():
+        return await tools.create_patient({
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": "2234567899",
+            "email": "new@example.com",
+            "address_line_1": "456 Oak Ave",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        })
+
+    result = asyncio.run(run())
+    assert result["status"] == "updated"
+    assert result["patient"]["email"] == "new@example.com"
+    assert result["patient"]["address_line_1"] == "456 Oak Ave"
+    assert result["patient"]["patient_id"] == "primary-id"

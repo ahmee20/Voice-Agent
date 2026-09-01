@@ -63,10 +63,43 @@ async def create_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
         existing_rows = await fetch_patient_by_phone(phone_number)
         if existing_rows:
             existing = _pick_primary_patient_record(existing_rows)
-            updates = {k: v for k, v in cleaned.items() if v is not None and k not in {"patient_id", "created_at", "updated_at"}}
-            updates["updated_at"] = _utc_now_iso()
-            updates["partial_info"] = bool(arguments.get("partial_info", False)) or bool(existing.get("partial_info", False))
-            updated = await update_patient_record(existing["patient_id"], {k: v for k, v in {**existing, **updates}.items() if k not in {"patient_id", "created_at", "deleted_at"}})
+            if existing is None:
+                return {"status": "error", "message": "I couldn't find the patient record to update."}
+
+            merged = dict(existing)
+            for key, value in cleaned.items():
+                if key in {"patient_id", "created_at", "updated_at", "deleted_at"}:
+                    continue
+                if value is None:
+                    continue
+                merged[key] = value
+
+            merged["partial_info"] = bool(arguments.get("partial_info", False)) or bool(existing.get("partial_info", False))
+            merged["updated_at"] = _utc_now_iso()
+
+            meaningful_fields = {
+                key: value
+                for key, value in merged.items()
+                if key not in {"patient_id", "created_at", "deleted_at", "updated_at"}
+                and value is not None
+                and not (key == "preferred_language" and value == "English" and existing.get(key) is None)
+            }
+
+            changed_fields = {}
+            for key, value in meaningful_fields.items():
+                existing_value = existing.get(key)
+                if key == "partial_info":
+                    if bool(existing_value) != bool(value):
+                        changed_fields[key] = value
+                    continue
+                if existing_value != value:
+                    changed_fields[key] = value
+
+            if not changed_fields:
+                return {"status": "unchanged", "partial_info": bool(merged.get("partial_info", False)), "patient": existing, "existing_record": True}
+
+            updates = {k: v for k, v in merged.items() if k not in {"patient_id", "created_at", "deleted_at"}}
+            updated = await update_patient_record(existing["patient_id"], updates)
             return {"status": "updated", "partial_info": bool(updated.get("partial_info", False)), "patient": updated, "existing_record": True}
 
         cleaned["patient_id"] = str(uuid.uuid4())
