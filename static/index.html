@@ -88,13 +88,54 @@
         border: none;
         cursor: pointer;
         font-weight: 600;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.2s ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 18px rgba(29, 78, 216, 0.18);
       }
       button.secondary {
         background: #eef2ff;
         color: var(--primary);
       }
+      button:disabled {
+        opacity: 0.72;
+        cursor: wait;
+        transform: none;
+        box-shadow: none;
+      }
+      .loading-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255, 255, 255, 0.4);
+        border-top-color: #ffffff;
+        border-radius: 50%;
+        animation: spin 0.75s linear infinite;
+        vertical-align: middle;
+        margin-right: 8px;
+      }
       .table-wrap {
         overflow-x: auto;
+      }
+      .patient-row {
+        animation: fadeInUp 0.35s ease;
+      }
+      .patient-row:hover td {
+        background: rgba(29, 78, 216, 0.03);
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes fadeInUp {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
       table {
         width: 100%;
@@ -230,6 +271,7 @@
     <script>
       const apiBase = window.location.origin;
       const errorBox = document.getElementById('errorBox');
+      const loadBtn = document.getElementById('loadBtn');
 
       function showError(message) {
         errorBox.textContent = message;
@@ -241,81 +283,116 @@
         errorBox.classList.remove('visible');
       }
 
-      async function loadPatients() {
-        clearError();
-        const params = new URLSearchParams();
-        const lastName = document.getElementById('lastName').value.trim();
-        const dob = document.getElementById('dob').value.trim();
-        const phone = document.getElementById('phone').value.trim();
+      function setLoadingState(button, isLoading, label = 'Loading...') {
+        if (!button) return;
+        if (!button.dataset.defaultLabel) {
+          button.dataset.defaultLabel = button.textContent.trim();
+        }
 
-        if (lastName) params.set('last_name', lastName);
-        if (dob) params.set('date_of_birth', dob);
-        if (phone) params.set('phone_number', phone);
-
-        const url = `${apiBase}/patients${params.toString() ? `?${params}` : ''}`;
-        const res = await fetch(url);
-        const json = await res.json();
-
-        if (!res.ok) {
-          showError(json?.error?.message || 'Unable to load patients');
+        if (isLoading) {
+          button.disabled = true;
+          button.innerHTML = `<span class="loading-spinner"></span><span>${label}</span>`;
           return;
         }
 
-        const rows = json.data || [];
-        const tbody = document.getElementById('patientTableBody');
-        tbody.innerHTML = '';
-
-        if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="5" class="muted">No patients found.</td></tr>';
-          return;
-        }
-
-        rows.forEach((patient) => {
-          const tr = document.createElement('tr');
-          const name = `${patient.first_name || ''} ${patient.last_name || ''}`.trim();
-          tr.innerHTML = `
-            <td>${name}</td>
-            <td>${patient.date_of_birth || '-'}</td>
-            <td>${patient.phone_number || '-'}</td>
-            <td>${patient.state || '-'}</td>
-            <td><button class="secondary" type="button" data-id="${patient.patient_id}">View</button></td>
-          `;
-          tbody.appendChild(tr);
-        });
-
-        tbody.querySelectorAll('button').forEach((button) => {
-          button.addEventListener('click', async () => {
-            const patientId = button.dataset.id;
-            const record = await fetch(`${apiBase}/patients/${patientId}`).then((r) => r.json());
-            const detail = JSON.stringify(record.data || {}, null, 2);
-            alert(detail);
-          });
-        });
+        button.disabled = false;
+        button.innerHTML = button.dataset.defaultLabel;
       }
 
-      document.getElementById('loadBtn').addEventListener('click', loadPatients);
+      async function loadPatients() {
+        clearError();
+        setLoadingState(loadBtn, true, 'Loading patients');
+
+        try {
+          const params = new URLSearchParams();
+          const lastName = document.getElementById('lastName').value.trim();
+          const dob = document.getElementById('dob').value.trim();
+          const phone = document.getElementById('phone').value.trim();
+
+          if (lastName) params.set('last_name', lastName);
+          if (dob) params.set('date_of_birth', dob);
+          if (phone) params.set('phone_number', phone);
+
+          const url = `${apiBase}/patients${params.toString() ? `?${params}` : ''}`;
+          const res = await fetch(url);
+          const json = await res.json();
+
+          if (!res.ok) {
+            showError(json?.error?.message || 'Unable to load patients');
+            return;
+          }
+
+          const rows = json.data || [];
+          const tbody = document.getElementById('patientTableBody');
+          tbody.innerHTML = '';
+
+          if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="muted">No patients found.</td></tr>';
+            return;
+          }
+
+          rows.forEach((patient) => {
+            const tr = document.createElement('tr');
+            tr.className = 'patient-row';
+            const name = `${patient.first_name || ''} ${patient.last_name || ''}`.trim();
+            tr.innerHTML = `
+              <td>${name}</td>
+              <td>${patient.date_of_birth || '-'}</td>
+              <td>${patient.phone_number || '-'}</td>
+              <td>${patient.state || '-'}</td>
+              <td><button class="secondary" type="button" data-id="${patient.patient_id}">View</button></td>
+            `;
+            tbody.appendChild(tr);
+          });
+
+          tbody.querySelectorAll('button').forEach((button) => {
+            button.addEventListener('click', async () => {
+              setLoadingState(button, true, 'Loading');
+              try {
+                const patientId = button.dataset.id;
+                const record = await fetch(`${apiBase}/patients/${patientId}`).then((r) => r.json());
+                const detail = JSON.stringify(record.data || {}, null, 2);
+                alert(detail);
+              } finally {
+                setLoadingState(button, false);
+              }
+            });
+          });
+        } finally {
+          setLoadingState(loadBtn, false);
+        }
+      }
+
+      loadBtn.addEventListener('click', loadPatients);
 
       document.getElementById('patientForm').addEventListener('submit', async (event) => {
         event.preventDefault();
         clearError();
         const form = event.currentTarget;
+        const submitBtn = form.querySelector('button[type="submit"]');
         const payload = Object.fromEntries(new FormData(form).entries());
 
-        const res = await fetch(`${apiBase}/patients`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
+        setLoadingState(submitBtn, true, 'Creating...');
 
-        const json = await res.json();
-        if (!res.ok) {
-          showError(json?.error?.message || 'Unable to create patient');
-          return;
+        try {
+          const res = await fetch(`${apiBase}/patients`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          const json = await res.json();
+          if (!res.ok) {
+            showError(json?.error?.message || 'Unable to create patient');
+            return;
+          }
+
+          form.reset();
+          await loadPatients();
+          alert('Patient created successfully');
+        } finally {
+          setLoadingState(submitBtn, false);
         }
-
-        form.reset();
-        await loadPatients();
-        alert('Patient created successfully');
       });
 
       loadPatients();
