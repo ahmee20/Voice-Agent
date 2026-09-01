@@ -15,6 +15,7 @@ def _utc_now_iso() -> str:
 
 async def check_existing_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
     phone_number = arguments.get("phone_number")
+    partial_info = bool(arguments.get("partial_info", False))
     try:
         normalized_phone = normalize_phone_number(phone_number) if phone_number is not None else ""
         if not normalized_phone:
@@ -22,10 +23,14 @@ async def check_existing_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         patient_rows = await fetch_patient_by_phone(normalized_phone)
         if not patient_rows:
-            return {"status": "not_found", "message": "No patient found for this phone number."}
+            return {"status": "not_found", "partial_info": partial_info, "message": "No patient found for this phone number."}
 
         patient = patient_rows[0]
-        return {"status": "found", "patient": patient}
+        return {
+            "status": "found",
+            "partial_info": bool(patient.get("partial_info", False)) or partial_info,
+            "patient": patient,
+        }
     except ValidationError as exc:
         logger.warning("Validation failure in check_existing_patient: %s", exc)
         return {"status": "error", "message": exc.result_string()}
@@ -50,9 +55,10 @@ async def create_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
         cleaned["patient_id"] = str(uuid.uuid4())
         cleaned["created_at"] = _utc_now_iso()
         cleaned["updated_at"] = _utc_now_iso()
+        cleaned["partial_info"] = bool(arguments.get("partial_info", False)) or bool(cleaned.get("partial_info", False))
 
         record = await insert_patient(cleaned)
-        return {"status": "created", "patient": record}
+        return {"status": "created", "partial_info": bool(record.get("partial_info", False)), "patient": record}
     except ValidationError as exc:
         logger.warning("Validation failure in create_patient: %s", exc)
         return {"status": "error", "message": exc.result_string()}
@@ -73,7 +79,7 @@ async def update_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
         patient_uuid = normalize_uuid(patient_id)
         existing = await fetch_patient_by_id(patient_uuid)
         if not existing:
-            return {"status": "not_found", "message": "I couldn't find a patient with that ID, so I couldn't update the record."}
+            return {"status": "not_found", "partial_info": bool(arguments.get("partial_info", False)), "message": "I couldn't find a patient with that ID, so I couldn't update the record."}
 
         updates, errors = build_update_payload(arguments)
         if errors:
@@ -81,9 +87,10 @@ async def update_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not updates:
             return {"status": "error", "message": "I didn't receive any patient details to update."}
 
+        updates["partial_info"] = bool(arguments.get("partial_info", False)) or bool(existing.get("partial_info", False))
         updates["updated_at"] = _utc_now_iso()
         updated = await update_patient_record(patient_uuid, updates)
-        return {"status": "updated", "patient": updated}
+        return {"status": "updated", "partial_info": bool(updated.get("partial_info", False)), "patient": updated}
     except ValidationError as exc:
         logger.warning("Validation failure in update_patient: %s", exc)
         return {"status": "error", "message": exc.result_string()}

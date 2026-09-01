@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from validation import normalize_phone_number
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -64,6 +66,7 @@ def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
 
 async def fetch_patient_by_phone(phone_number: str) -> List[Dict[str, Any]]:
     try:
+        normalized_phone = normalize_phone_number(phone_number)
         engine = get_engine()
         async with engine.connect() as connection:
             result = await connection.execute(
@@ -76,7 +79,7 @@ async def fetch_patient_by_phone(phone_number: str) -> List[Dict[str, Any]]:
                     LIMIT 1
                     """
                 ),
-                {"phone_number": phone_number},
+                {"phone_number": normalized_phone},
             )
             rows = result.mappings().all()
             await connection.close()
@@ -126,7 +129,7 @@ async def list_patients(filters: Optional[Dict[str, Any]] = None) -> List[Dict[s
                     params["date_of_birth"] = value
                 elif key == "phone_number":
                     clauses.append("phone_number = :phone_number")
-                    params["phone_number"] = value
+                    params["phone_number"] = normalize_phone_number(value)
 
         query = "SELECT * FROM patients WHERE " + " AND ".join(clauses)
         engine = get_engine()

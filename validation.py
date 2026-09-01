@@ -91,9 +91,11 @@ def _normalize_text(value: Any) -> str:
 
 def normalize_phone_number(value: Any) -> str:
     digits = re.sub(r"\D", "", _normalize_text(value))
-    if len(digits) != 10:
-        raise ValidationError("phone_number", "not a valid 10-digit U.S. phone number")
-    return digits
+    if len(digits) == 10:
+        return "1" + digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return digits
+    raise ValidationError("phone_number", "not a valid 10-digit U.S. phone number")
 
 
 def normalize_uuid(value: Any) -> str:
@@ -232,6 +234,7 @@ def normalize_patient_data(payload: Dict[str, Any], partial: bool = False) -> Tu
         "insurance_provider": ("insurance_provider", lambda v: normalize_optional_string(v, "insurance_provider", 255)),
         "insurance_member_id": ("insurance_member_id", lambda v: normalize_optional_string(v, "insurance_member_id", 255)),
         "preferred_language": ("preferred_language", lambda v: normalize_optional_string(v, "preferred_language", 100) or "English"),
+        "partial_info": ("partial_info", lambda v: bool(v)),
         "emergency_contact_name": ("emergency_contact_name", lambda v: normalize_optional_string(v, "emergency_contact_name", 255)),
         "emergency_contact_phone": ("emergency_contact_phone", normalize_phone_optional),
     }
@@ -250,6 +253,9 @@ def normalize_patient_data(payload: Dict[str, Any], partial: bool = False) -> Tu
         normalized["preferred_language"] = "English"
     elif "preferred_language" in payload and payload["preferred_language"] is None:
         normalized["preferred_language"] = "English"
+
+    if "partial_info" in payload and payload["partial_info"] is not None:
+        normalized["partial_info"] = bool(payload["partial_info"])
 
     return normalized, errors
 
@@ -279,6 +285,7 @@ def build_update_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[
         "insurance_provider",
         "insurance_member_id",
         "preferred_language",
+        "partial_info",
         "emergency_contact_name",
         "emergency_contact_phone",
     ]
@@ -292,6 +299,8 @@ def build_update_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[
         try:
             if field_name == "preferred_language":
                 normalized[field_name] = normalize_optional_string(payload[field_name], field_name, 100) or "English"
+            elif field_name == "partial_info":
+                normalized[field_name] = bool(payload[field_name])
             elif field_name == "phone_number":
                 normalized[field_name] = normalize_phone_number(payload[field_name])
             elif field_name == "state":

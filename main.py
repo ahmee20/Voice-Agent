@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -53,6 +54,12 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
     return api_response(data=None, error=error_payload, status_code=exc.status_code)
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.warning("Request validation failed: %s", exc.errors())
+    return api_response(data=None, error={"message": exc.errors()}, status_code=422)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled server error: %s", exc)
@@ -95,7 +102,7 @@ async def list_patients_route(last_name: str | None = None, date_of_birth: str |
     filters: Dict[str, str | None] = {
         "last_name": last_name,
         "date_of_birth": date_of_birth,
-        "phone_number": phone_number,
+        "phone_number": normalize_phone_number(phone_number) if phone_number else None,
     }
     try:
         patients = await db_list_patients(filters)
@@ -120,7 +127,12 @@ async def get_patient_route(patient_id: str):
 
 @app.post("/patients")
 async def create_patient_route(request: Request):
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        logger.warning("Invalid JSON payload on create patient: %s", exc)
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON") from exc
+
     try:
         cleaned, errors = normalize_patient_data(payload, partial=False)
         if errors:
@@ -147,7 +159,12 @@ async def update_patient_route(patient_id: str, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid patient_id: must be a valid UUID") from exc
 
-    payload = await request.json()
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        logger.warning("Invalid JSON payload on update patient: %s", exc)
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON") from exc
+
     if not payload:
         raise HTTPException(status_code=400, detail="No update fields were provided")
 
@@ -199,6 +216,8 @@ async def webhook(request: Request) -> Response:
             status_code=200,
         )
 
+    logger.info("Webhook payload received: %s", json.dumps(payload, default=str, separators=(",", ":")))
+
     tool_calls: List[Dict[str, Any]] = payload.get("message", {}).get("toolCallList", []) or []
     if not isinstance(tool_calls, list):
         tool_calls = []
@@ -228,6 +247,7 @@ async def webhook(request: Request) -> Response:
         results.append({"toolCallId": tool_call_id, "result": tool_result})
 
     response_body = {"results": results}
+    logger.info("Webhook final response payload: %s", json.dumps(response_body, default=str, separators=(",", ":")))
     return Response(
         content=json.dumps(response_body, separators=(",", ":")),
         media_type="application/json",
