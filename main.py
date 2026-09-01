@@ -1,11 +1,17 @@
+import asyncio
 import json
 import logging
+import sys
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from db import list_patients as db_list_patients
 from db import fetch_patient_by_id as db_fetch_patient_by_id
@@ -19,19 +25,26 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("carecloud.webhook")
 
 app = FastAPI(title="CareCloud API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _dispatch_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
+async def _dispatch_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
     if tool_name == "check_existing_patient":
-        return check_existing_patient(arguments)
+        return await check_existing_patient(arguments)
     if tool_name == "create_patient":
-        return create_patient(arguments)
+        return await create_patient(arguments)
     if tool_name == "update_patient":
-        return update_patient(arguments)
+        return await update_patient(arguments)
     logger.warning("Unknown tool name encountered: %s", tool_name)
     return "I wasn't able to find a matching tool for that request."
 
@@ -48,12 +61,12 @@ async def list_patients_route(last_name: str | None = None, date_of_birth: str |
         "date_of_birth": date_of_birth,
         "phone_number": phone_number,
     }
-    return db_list_patients(filters)
+    return await db_list_patients(filters)
 
 
 @app.get("/patients/{patient_id}")
 async def get_patient_route(patient_id: str):
-    patient = db_fetch_patient_by_id(patient_id)
+    patient = await db_fetch_patient_by_id(patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     return patient
@@ -70,7 +83,7 @@ async def create_patient_route(request: Request):
         cleaned["created_at"] = _utc_now_iso()
         cleaned["updated_at"] = _utc_now_iso()
         cleaned["preferred_language"] = cleaned.get("preferred_language", "English")
-        created = db_insert_patient(cleaned)
+        created = await db_insert_patient(cleaned)
         return created
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.result_string()) from exc
@@ -92,17 +105,17 @@ async def update_patient_route(patient_id: str, request: Request):
         raise HTTPException(status_code=400, detail="No valid patient fields to update")
 
     updates["updated_at"] = _utc_now_iso()
-    updated = db_update_patient(patient_id, updates)
+    updated = await db_update_patient(patient_id, updates)
     return updated
 
 
 @app.delete("/patients/{patient_id}")
 async def delete_patient_route(patient_id: str):
-    existing = db_fetch_patient_by_id(patient_id)
+    existing = await db_fetch_patient_by_id(patient_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    deleted = db_soft_delete_patient(patient_id)
+    deleted = await db_soft_delete_patient(patient_id)
     return {"message": "Patient soft deleted successfully", "patient_id": patient_id, "deleted_at": deleted.get("deleted_at")}
 
 
@@ -143,7 +156,7 @@ async def webhook(request: Request) -> Response:
         logger.info("Incoming tool call: tool_name=%s arguments=%s", tool_name, arguments)
 
         try:
-            result_text = _dispatch_tool(tool_name, arguments)
+            result_text = await _dispatch_tool(tool_name, arguments)
             logger.info("Tool call handled: tool_name=%s toolCallId=%s outcome=success", tool_name, tool_call_id)
         except Exception:
             logger.exception("Unhandled exception while processing tool_name=%s toolCallId=%s", tool_name, tool_call_id)
@@ -151,7 +164,6 @@ async def webhook(request: Request) -> Response:
 
         results.append({"toolCallId": tool_call_id, "result": result_text})
 
-    # Vapi requires a top-level object with a results array and no embedded line breaks in the body.
     response_body = {"results": results}
     return Response(
         content=json.dumps(response_body, separators=(",", ":")),
