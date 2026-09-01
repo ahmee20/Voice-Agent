@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import sys
@@ -39,14 +40,20 @@ def _utc_now_iso() -> str:
 
 
 async def _dispatch_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
-    if tool_name == "check_existing_patient":
-        return await check_existing_patient(arguments)
-    if tool_name == "create_patient":
-        return await create_patient(arguments)
-    if tool_name == "update_patient":
-        return await update_patient(arguments)
-    logger.warning("Unknown tool name encountered: %s", tool_name)
-    return "I wasn't able to find a matching tool for that request."
+    tool_lookup = {
+        "check_existing_patient": check_existing_patient,
+        "create_patient": create_patient,
+        "update_patient": update_patient,
+    }
+    tool_fn = tool_lookup.get(tool_name)
+    if tool_fn is None:
+        logger.warning("Unknown tool name encountered: %s", tool_name)
+        return "I wasn't able to find a matching tool for that request."
+
+    result = tool_fn(arguments)
+    if inspect.isawaitable(result):
+        result = await result
+    return str(result)
 
 
 @app.get("/")
