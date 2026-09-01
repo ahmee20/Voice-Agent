@@ -40,6 +40,29 @@ def test_phone_number_is_normalized_by_removing_leading_one_when_needed():
     assert normalize_phone_number("12234567899") == "2234567899"
 
 
+def test_webhook_accepts_vapi_camel_case_field_names():
+    response = client.post(
+        "/webhook",
+        json={
+            "message": {
+                "toolCallList": [
+                    {
+                        "id": "tool-camel-case",
+                        "function": {
+                            "name": "check_existing_patient",
+                            "arguments": {"phoneNumber": "12234567899", "partialInfo": True},
+                        },
+                    }
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"][0]["toolCallId"] == "tool-camel-case"
+    assert "status" in payload["results"][0]["result"]
+
+
 def test_create_patient_invalid_input_returns_422_and_envelope():
     response = client.post(
         "/patients",

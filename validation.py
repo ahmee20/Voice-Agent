@@ -61,6 +61,37 @@ VALID_SEXES = {"Male", "Female", "Other", "Decline to Answer"}
 NAME_PATTERN = re.compile(r"^[A-Za-z\s'\-]+$")
 EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 ZIP_PATTERN = re.compile(r"^\d{5}(?:-\d{4})?$")
+FIELD_ALIASES = {
+    "patientId": "patient_id",
+    "firstName": "first_name",
+    "lastName": "last_name",
+    "dateOfBirth": "date_of_birth",
+    "sex": "sex",
+    "phoneNumber": "phone_number",
+    "email": "email",
+    "addressLine1": "address_line_1",
+    "addressLine2": "address_line_2",
+    "city": "city",
+    "state": "state",
+    "zipCode": "zip_code",
+    "insuranceProvider": "insurance_provider",
+    "insuranceMemberId": "insurance_member_id",
+    "preferredLanguage": "preferred_language",
+    "partialInfo": "partial_info",
+    "emergencyContactName": "emergency_contact_name",
+    "emergencyContactPhone": "emergency_contact_phone",
+}
+
+
+def canonicalize_field_names(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {} if payload is None else payload
+
+    normalized = dict(payload)
+    for alias, canonical in FIELD_ALIASES.items():
+        if alias in normalized and canonical not in normalized:
+            normalized[canonical] = normalized.pop(alias)
+    return normalized
 
 
 class ValidationError(ValueError):
@@ -216,6 +247,7 @@ def normalize_phone_optional(value: Any) -> str | None:
 
 
 def normalize_patient_data(payload: Dict[str, Any], partial: bool = False) -> Tuple[Dict[str, Any], List[str]]:
+    payload = canonicalize_field_names(payload)
     normalized: Dict[str, Any] = {}
     errors: List[str] = []
 
@@ -270,6 +302,7 @@ def _require_text(value: Any, field_name: str, max_length: int | None = None) ->
 
 
 def build_update_payload(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    payload = canonicalize_field_names(payload)
     allowed_fields = [
         "first_name",
         "last_name",

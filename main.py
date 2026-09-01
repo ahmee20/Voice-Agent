@@ -23,7 +23,7 @@ from db import insert_patient as db_insert_patient
 from db import soft_delete_patient as db_soft_delete_patient
 from db import update_patient as db_update_patient
 from tools import check_existing_patient, create_patient, update_patient
-from validation import ValidationError, build_update_payload, normalize_patient_data
+from validation import ValidationError, build_update_payload, canonicalize_field_names, normalize_patient_data
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("carecloud.webhook")
@@ -231,6 +231,8 @@ async def webhook(request: Request) -> Response:
 
         if not isinstance(arguments, dict):
             arguments = {}
+
+        arguments = canonicalize_field_names(arguments)
 
         logger.info("Incoming tool call: tool_name=%s arguments=%s", tool_name, arguments)
 
