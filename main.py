@@ -107,6 +107,11 @@ async def list_patients_route(last_name: str | None = None, date_of_birth: str |
 
 @app.get("/patients/{patient_id}")
 async def get_patient_route(patient_id: str):
+    try:
+        uuid.UUID(patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid patient_id: must be a valid UUID") from exc
+
     patient = await db_fetch_patient_by_id(patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -137,6 +142,11 @@ async def create_patient_route(request: Request):
 
 @app.put("/patients/{patient_id}")
 async def update_patient_route(patient_id: str, request: Request):
+    try:
+        uuid.UUID(patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid patient_id: must be a valid UUID") from exc
+
     payload = await request.json()
     if not payload:
         raise HTTPException(status_code=400, detail="No update fields were provided")
@@ -154,6 +164,11 @@ async def update_patient_route(patient_id: str, request: Request):
 
 @app.delete("/patients/{patient_id}")
 async def delete_patient_route(patient_id: str):
+    try:
+        uuid.UUID(patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid patient_id: must be a valid UUID") from exc
+
     existing = await db_fetch_patient_by_id(patient_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Patient not found")
