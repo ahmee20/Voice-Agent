@@ -13,14 +13,14 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def check_existing_patient(arguments: Dict[str, Any]) -> str:
+async def check_existing_patient(arguments: Dict[str, Any]) -> str:
     phone_number = arguments.get("phone_number")
     try:
         normalized_phone = normalize_phone_number(phone_number) if phone_number is not None else ""
         if not normalized_phone:
             return "The phone number is required and can't be blank."
 
-        patient_rows = fetch_patient_by_phone(normalized_phone)
+        patient_rows = await fetch_patient_by_phone(normalized_phone)
         if not patient_rows:
             return "I couldn't find an existing patient with that phone number, so this looks like a new registration."
 
@@ -40,7 +40,7 @@ def check_existing_patient(arguments: Dict[str, Any]) -> str:
         return "I wasn't able to check for an existing patient because of a system error, a staff member will need to follow up."
 
 
-def create_patient(arguments: Dict[str, Any]) -> str:
+async def create_patient(arguments: Dict[str, Any]) -> str:
     try:
         cleaned, errors = normalize_patient_data(arguments, partial=False)
         if errors:
@@ -54,7 +54,7 @@ def create_patient(arguments: Dict[str, Any]) -> str:
         cleaned["created_at"] = _utc_now_iso()
         cleaned["updated_at"] = _utc_now_iso()
 
-        record = insert_patient(cleaned)
+        record = await insert_patient(cleaned)
         patient_id = record.get("patient_id")
         return f"The patient record was saved successfully with patient ID {patient_id}."
     except ValidationError as exc:
@@ -65,14 +65,14 @@ def create_patient(arguments: Dict[str, Any]) -> str:
         return "I wasn't able to save that due to a system error, a staff member will need to follow up."
 
 
-def update_patient(arguments: Dict[str, Any]) -> str:
+async def update_patient(arguments: Dict[str, Any]) -> str:
     patient_id = arguments.get("patient_id")
     if patient_id is None or str(patient_id).strip() == "":
         return "The patient ID is required to update an existing record."
 
     try:
         patient_uuid = normalize_uuid(patient_id)
-        existing = fetch_patient_by_id(patient_uuid)
+        existing = await fetch_patient_by_id(patient_uuid)
         if not existing:
             return "I couldn't find a patient with that ID, so I couldn't update the record."
 
@@ -83,7 +83,7 @@ def update_patient(arguments: Dict[str, Any]) -> str:
             return "I didn't receive any patient details to update."
 
         updates["updated_at"] = _utc_now_iso()
-        update_patient_record(patient_uuid, updates)
+        await update_patient_record(patient_uuid, updates)
         updated_fields = ", ".join(sorted(updates.keys())) if updates else "the record"
         return f"I updated the following fields: {updated_fields}."
     except ValidationError as exc:

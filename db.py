@@ -1,23 +1,55 @@
+import asyncio
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from dotenv import load_dotenv
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_database_url(url: str) -> str:
+    normalized = url.strip()
+    if "+asyncpg" in normalized:
+        logger.warning("SUPABASE_URL used asyncpg; converting to the psycopg async dialect.")
+        normalized = normalized.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+    elif normalized.startswith("postgresql://"):
+        normalized = normalized.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif "+psycopg2" in normalized:
+        normalized = normalized.replace("postgresql+psycopg2://", "postgresql+psycopg://")
+    return normalized
+
+
 def get_database_url() -> str:
-    url = os.getenv("SUPABASE_URL")
+    url = os.getenv("SUPABASE_URL") or os.getenv("DATABASE_URL")
     if not url:
-        raise RuntimeError("SUPABASE_URL must be configured to the Supabase Postgres connection string.")
-    return url
+        raise RuntimeError(
+            "SUPABASE_URL/DATABASE_URL must be configured to the Supabase Postgres connection string."
+        )
+    normalized_url = _normalize_database_url(url)
+    if normalized_url.startswith("postgresql+asyncpg://"):
+        raise RuntimeError(
+            "SUPABASE_URL must not use asyncpg. Use a psycopg async Postgres URL, for example: "
+            "postgresql+psycopg://postgres:password@db.project-ref.supabase.co:5432/postgres"
+        )
+    return normalized_url
 
 
-def get_engine() -> Engine:
-    return create_engine(get_database_url(), pool_pre_ping=True)
+def get_engine() -> AsyncEngine:
+    return create_async_engine(get_database_url(), pool_pre_ping=True)
+
+
+def get_session_factory():
+    return async_sessionmaker(bind=get_engine(), expire_on_commit=False)
 
 
 def utc_now_iso() -> str:
@@ -30,10 +62,11 @@ def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
     return [dict(row._mapping) for row in rows]
 
 
-def fetch_patient_by_phone(phone_number: str) -> List[Dict[str, Any]]:
+async def fetch_patient_by_phone(phone_number: str) -> List[Dict[str, Any]]:
     try:
-        with get_engine().connect() as connection:
-            result = connection.execute(
+        engine = get_engine()
+        async with engine.connect() as connection:
+            result = await connection.execute(
                 text(
                     """
                     SELECT *
@@ -45,16 +78,19 @@ def fetch_patient_by_phone(phone_number: str) -> List[Dict[str, Any]]:
                 ),
                 {"phone_number": phone_number},
             )
-            return _rows_to_dicts(result)
+            rows = result.mappings().all()
+            await connection.close()
+            return [dict(row) for row in rows]
     except Exception:
         logger.exception("Database lookup failed for patient by phone_number")
         raise
 
 
-def fetch_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
+async def fetch_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
     try:
-        with get_engine().connect() as connection:
-            result = connection.execute(
+        engine = get_engine()
+        async with engine.connect() as connection:
+            result = await connection.execute(
                 text(
                     """
                     SELECT *
@@ -66,14 +102,14 @@ def fetch_patient_by_id(patient_id: str) -> Optional[Dict[str, Any]]:
                 ),
                 {"patient_id": patient_id},
             )
-            rows = _rows_to_dicts(result)
-            return rows[0] if rows else None
+            rows = result.mappings().all()
+            return dict(rows[0]) if rows else None
     except Exception:
         logger.exception("Database lookup failed for patient by patient_id")
         raise
 
 
-def list_patients(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+async def list_patients(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     try:
         clauses = ["deleted_at IS NULL"]
         params: Dict[str, Any] = {}
@@ -93,33 +129,35 @@ def list_patients(filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, An
                     params["phone_number"] = value
 
         query = "SELECT * FROM patients WHERE " + " AND ".join(clauses)
-        with get_engine().connect() as connection:
-            result = connection.execute(text(query), params)
-            return _rows_to_dicts(result)
+        engine = get_engine()
+        async with engine.connect() as connection:
+            result = await connection.execute(text(query), params)
+            rows = result.mappings().all()
+            return [dict(row) for row in rows]
     except Exception:
         logger.exception("Database list failed for patients")
         raise
 
 
-def insert_patient(patient_data: Dict[str, Any]) -> Dict[str, Any]:
+async def insert_patient(patient_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         columns = ", ".join(patient_data.keys())
         placeholders = ", ".join(f":{key}" for key in patient_data.keys())
         query = text(f"INSERT INTO patients ({columns}) VALUES ({placeholders}) RETURNING *")
 
-        with get_engine().connect() as connection:
-            result = connection.execute(query, patient_data)
-            connection.commit()
-            rows = _rows_to_dicts(result)
-            if not rows:
+        engine = get_engine()
+        async with engine.begin() as connection:
+            result = await connection.execute(query, patient_data)
+            row = result.mappings().first()
+            if row is None:
                 raise RuntimeError("Database insert returned no patient data")
-            return rows[0]
+            return dict(row)
     except Exception:
         logger.exception("Database insert failed for patients table")
         raise
 
 
-def update_patient(patient_id: str, patient_data: Dict[str, Any]) -> Dict[str, Any]:
+async def update_patient(patient_id: str, patient_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         assignments = ", ".join(f"{key} = :{key}" for key in patient_data.keys())
         query = text(
@@ -127,31 +165,31 @@ def update_patient(patient_id: str, patient_data: Dict[str, Any]) -> Dict[str, A
         )
         params = {**patient_data, "patient_id": patient_id}
 
-        with get_engine().connect() as connection:
-            result = connection.execute(query, params)
-            connection.commit()
-            rows = _rows_to_dicts(result)
-            if not rows:
+        engine = get_engine()
+        async with engine.begin() as connection:
+            result = await connection.execute(query, params)
+            row = result.mappings().first()
+            if row is None:
                 raise RuntimeError("Database update returned no patient data")
-            return rows[0]
+            return dict(row)
     except Exception:
         logger.exception("Database update failed for patient_id=%s", patient_id)
         raise
 
 
-def soft_delete_patient(patient_id: str) -> Dict[str, Any]:
+async def soft_delete_patient(patient_id: str) -> Dict[str, Any]:
     try:
         timestamp = utc_now_iso()
         query = text(
             "UPDATE patients SET deleted_at = :deleted_at WHERE patient_id = :patient_id RETURNING *"
         )
-        with get_engine().connect() as connection:
-            result = connection.execute(query, {"deleted_at": timestamp, "patient_id": patient_id})
-            connection.commit()
-            rows = _rows_to_dicts(result)
-            if not rows:
+        engine = get_engine()
+        async with engine.begin() as connection:
+            result = await connection.execute(query, {"deleted_at": timestamp, "patient_id": patient_id})
+            row = result.mappings().first()
+            if row is None:
                 raise RuntimeError("Database delete returned no patient data")
-            return rows[0]
+            return dict(row)
     except Exception:
         logger.exception("Database soft-delete failed for patient_id=%s", patient_id)
         raise
