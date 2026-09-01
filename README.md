@@ -1,4 +1,4 @@
-# Voice AI Agent — Patient Registration System
+# Voice AI Patient Registration Agent
 
 ## Table of Contents
 
