@@ -13,6 +13,17 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+async def _merge_patient_update(existing: Dict[str, Any], new_values: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(existing)
+    for key, value in new_values.items():
+        if key in {"patient_id", "created_at", "deleted_at"}:
+            continue
+        if value is None:
+            continue
+        merged[key] = value
+    return merged
+
+
 async def check_existing_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
     phone_number = arguments.get("phone_number")
     partial_info = bool(arguments.get("partial_info", False))
@@ -51,14 +62,26 @@ async def create_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not cleaned:
             return {"status": "error", "message": "No patient information was provided to save."}
 
-        cleaned["phone_number"] = normalize_phone_number(cleaned["phone_number"])
+        phone_number = normalize_phone_number(cleaned["phone_number"])
+        cleaned["phone_number"] = phone_number
+
+        existing_rows = await fetch_patient_by_phone(phone_number)
+        if existing_rows:
+            existing = existing_rows[0]
+            updates = {k: v for k, v in cleaned.items() if v is not None and k not in {"patient_id", "created_at", "updated_at"}}
+            updates["updated_at"] = _utc_now_iso()
+            updates["partial_info"] = bool(arguments.get("partial_info", False)) or bool(existing.get("partial_info", False))
+            merged = await _merge_patient_update(existing, updates)
+            updated = await update_patient_record(existing["patient_id"], {k: v for k, v in merged.items() if k not in {"patient_id", "created_at", "deleted_at"}})
+            return {"status": "updated", "partial_info": bool(updated.get("partial_info", False)), "patient": updated, "existing_record": True}
+
         cleaned["patient_id"] = str(uuid.uuid4())
         cleaned["created_at"] = _utc_now_iso()
         cleaned["updated_at"] = _utc_now_iso()
         cleaned["partial_info"] = bool(arguments.get("partial_info", False)) or bool(cleaned.get("partial_info", False))
 
         record = await insert_patient(cleaned)
-        return {"status": "created", "partial_info": bool(record.get("partial_info", False)), "patient": record}
+        return {"status": "created", "partial_info": bool(record.get("partial_info", False)), "patient": record, "existing_record": False}
     except ValidationError as exc:
         logger.warning("Validation failure in create_patient: %s", exc)
         return {"status": "error", "message": exc.result_string()}

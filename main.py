@@ -247,9 +247,10 @@ async def webhook(request: Request) -> Response:
         results.append({"toolCallId": tool_call_id, "result": tool_result})
 
     response_body = {"results": results}
-    logger.info("Webhook final response payload: %s", json.dumps(response_body, default=str, separators=(",", ":")))
+    safe_body = jsonable_encoder(response_body)
+    logger.info("Webhook final response payload: %s", json.dumps(safe_body, default=str, separators=(",", ":")))
     return Response(
-        content=json.dumps(response_body, separators=(",", ":")),
+        content=json.dumps(safe_body, separators=(",", ":")),
         media_type="application/json",
         status_code=200,
     )

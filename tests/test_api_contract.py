@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -62,3 +64,37 @@ def test_webhook_return_shape_for_empty_payload():
     payload = response.json()
     assert "results" in payload
     assert isinstance(payload["results"], list)
+
+
+def test_webhook_handles_uuid_values_in_tool_result():
+    import main
+
+    async def fake_dispatch(tool_name, arguments):
+        return {
+            "status": "found",
+            "patient": {"patient_id": uuid.uuid4(), "first_name": "John"},
+        }
+
+    original = main._dispatch_tool
+    main._dispatch_tool = fake_dispatch
+    try:
+        response = client.post(
+            "/webhook",
+            json={
+                "message": {
+                    "toolCallList": [
+                        {
+                            "id": "tool-1",
+                            "function": {"name": "check_existing_patient", "arguments": {"phone_number": "2234567899"}},
+                        }
+                    ]
+                }
+            },
+        )
+    finally:
+        main._dispatch_tool = original
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"][0]["result"]["status"] == "found"
+    assert payload["results"][0]["result"]["patient"]["patient_id"]
