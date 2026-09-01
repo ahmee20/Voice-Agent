@@ -1,5 +1,23 @@
 # Voice AI Agent — Patient Registration System
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Challenge Summary](#challenge-summary)
+- [What This Solution Includes](#what-this-solution-includes)
+- [System Architecture](#system-architecture)
+- [High-Level Data Flow](#high-level-data-flow)
+- [Functional Requirements from the Assessment](#functional-requirements-from-the-assessment)
+- [Live Demo](#live-demo)
+- [REST API](#rest-api)
+- [Webhook / Vapi Tool Contract](#webhook--vapi-tool-contract)
+- [Data Model and Schema](#data-model-and-schema)
+- [Prompt / Agent-Level Requirements and Conversation Design](#prompt--agent-level-requirements-and-conversation-design)
+- [Edge Cases and Resilience Behavior](#edge-cases-and-resilience-behavior)
+- [Duplicate Handling Behavior](#duplicate-handling-behavior)
+- [Trade-offs: Accuracy vs Latency vs Cost](#trade-offs-accuracy-vs-latency-vs-cost)
+
+
 ## Overview
 
 This project is a complete implementation of the take-home technical assessment for a voice-based patient registration system. The system is designed to let a caller speak naturally to a voice AI assistant, collect patient demographic information, persist the data to a database, and expose the records through a lightweight REST API and dashboard.
@@ -48,6 +66,7 @@ This implementation includes:
 - duplicate-safe lookup logic for phone-number matching
 - support for Vapi-style camelCase and snake_case payloads
 - partial info tracking for interrupted or incomplete calls
+- future capability: transcript records can be stored in the database for auditing, training, and call review
 
 ---
 
@@ -77,6 +96,7 @@ The system is intentionally structured to separate concerns:
 5. Observability
    - Webhook payloads and generated final responses are logged to stdout
    - Validation failures are surfaced with clear error messages
+   - Future enhancement: conversation transcripts and final collected payloads can be persisted in a dedicated database table for auditing and later review
 
 ---
 
@@ -179,6 +199,20 @@ The schema enforces:
 
 The project also supports duplicate detection by phone number and refuses to lose the original record by preserving the primary match.
 
+### Future Transcript Storage (planned enhancement)
+
+A natural next step for this system is to persist the actual call transcript and final extracted patient payload in the database for auditing, QA, and review.
+
+Planned behavior:
+
+- store a transcript row keyed to the patient and/or call session
+- save the final patient payload as a structured JSON object after confirmation
+- capture the raw phone-call transcript or summarized conversation timeline
+- keep timestamps and optional call-status metadata
+- support down-stream analytics, quality monitoring, and dispute review
+
+This is not yet implemented as a production table in the current codebase, but it is a clear and appropriate extension to the existing persistence model because the backend already logs final payloads and the database is already the canonical source of truth for patient records.
+
 ---
 
 ## Live Demo
@@ -187,7 +221,7 @@ The project also supports duplicate detection by phone number and refuses to los
 - Phone number to call: +1 (430) 599 8472
 - Webhook endpoint: https://voice-agent-production-a8a4.up.railway.app/webhook
 
-The backend exposes the Vapi tool webhook at `/webhook`, which receives tool-call payloads from the voice assistant, processes the requested patient action, and returns the structured Vapi-compatible response object.
+The backend exposes the Vapi tool webhook at `/webhook`, which receives tool-call payloads from the voice assistant, processes the requested patient action, and returns the structured Vapi-compatible response object (it would not show anything on web, it is just forr the refernce)
 
 ---
 
@@ -402,12 +436,14 @@ patient, brisk when things are going smoothly, and unflustered when they are not
 
 # CALL FLOW
 
+#IMPORTANT: WHENEVER YOU ARE GOING TO USE A TOOL OR PERFORM ANY ACTION TELL THE USER SOMETHING LIKE 'LET ME CHECK' OR ETC.. DO NOT STATY SILENT AND MOVE DIRECTLY TO THE TOOL USING OR ELSE THE USER WILL INTERUPT YOU OR CUT THE CALL.
+
 1. Greet the caller (handled by the first message). Wait for the reply and after a reply and ask for their phone
    number, "Before we get started, can I get your phone number so I can check if we already have a record for you?". Specify that user does not need to add the country code, if he/she does and the number exceeds 10 digits, remove the first digit also do not include any sign, like +, if the user mentions it as well. You yourself too shouldnt ask for country code.
 2. Call the `check_existing_patient` tool with the phone number. It will return either a json with data retrieved (with status that if the information was partial or complete) or with message saying no data found.
    - If a match is found: tell the caller "It looks like we already have a
      record for [First Name] [Last Name]. Would you like to update your
-     information instead, or is this a different patient?" Branch accordingly.
+     information instead?" Branch accordingly.
      For updates, ask only what they want to change, then use `update_patient`.
    - If no match: proceed to collect a new registration.
 3. Collect REQUIRED fields, in this order, one at a time:
@@ -529,7 +565,7 @@ instead of guessing.
 - Never save a record without an explicit verbal confirmation from the
   caller.
 - Never invent or assume a value for a required field the caller hasn't
-given you.
+  given you.
 - Never end the call before either completing registration, completing an
   update, or clearly telling the caller what happens next if something
   failed.
