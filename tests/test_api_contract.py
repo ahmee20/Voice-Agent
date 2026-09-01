@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 import pytest
@@ -121,3 +122,38 @@ def test_webhook_handles_uuid_values_in_tool_result():
     payload = response.json()
     assert payload["results"][0]["result"]["status"] == "found"
     assert payload["results"][0]["result"]["patient"]["patient_id"]
+
+
+def test_create_patient_keeps_first_matching_record_without_deleting_any(monkeypatch):
+    import tools
+
+    async def fake_fetch_patient_by_phone(phone_number):
+        return [
+            {"patient_id": "primary-id", "phone_number": phone_number, "partial_info": False},
+            {"patient_id": "duplicate-id", "phone_number": phone_number, "partial_info": False},
+        ]
+
+    async def fake_update_patient_record(patient_id, payload):
+        return {"patient_id": patient_id, **payload}
+
+    monkeypatch.setattr(tools, "fetch_patient_by_phone", fake_fetch_patient_by_phone)
+    monkeypatch.setattr(tools, "update_patient_record", fake_update_patient_record)
+    monkeypatch.setattr(tools, "insert_patient", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not insert duplicate record")))
+
+    async def run():
+        return await tools.create_patient({
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "date_of_birth": "1990-01-01",
+            "sex": "Female",
+            "phone_number": "2234567899",
+            "address_line_1": "123 Main St",
+            "city": "Dallas",
+            "state": "TX",
+            "zip_code": "75201",
+            "partial_info": False,
+        })
+
+    result = asyncio.run(run())
+    assert result["status"] == "updated"
+    assert result["patient"]["patient_id"] == "primary-id"

@@ -13,15 +13,10 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _merge_patient_update(existing: Dict[str, Any], new_values: Dict[str, Any]) -> Dict[str, Any]:
-    merged = dict(existing)
-    for key, value in new_values.items():
-        if key in {"patient_id", "created_at", "deleted_at"}:
-            continue
-        if value is None:
-            continue
-        merged[key] = value
-    return merged
+def _pick_primary_patient_record(patient_rows: list[Dict[str, Any]]) -> Dict[str, Any] | None:
+    if not patient_rows:
+        return None
+    return patient_rows[0]
 
 
 async def check_existing_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -36,7 +31,7 @@ async def check_existing_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not patient_rows:
             return {"status": "not_found", "partial_info": partial_info, "message": "No patient found for this phone number."}
 
-        patient = patient_rows[0]
+        patient = _pick_primary_patient_record(patient_rows)
         return {
             "status": "found",
             "partial_info": bool(patient.get("partial_info", False)) or partial_info,
@@ -67,12 +62,11 @@ async def create_patient(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         existing_rows = await fetch_patient_by_phone(phone_number)
         if existing_rows:
-            existing = existing_rows[0]
+            existing = _pick_primary_patient_record(existing_rows)
             updates = {k: v for k, v in cleaned.items() if v is not None and k not in {"patient_id", "created_at", "updated_at"}}
             updates["updated_at"] = _utc_now_iso()
             updates["partial_info"] = bool(arguments.get("partial_info", False)) or bool(existing.get("partial_info", False))
-            merged = await _merge_patient_update(existing, updates)
-            updated = await update_patient_record(existing["patient_id"], {k: v for k, v in merged.items() if k not in {"patient_id", "created_at", "deleted_at"}})
+            updated = await update_patient_record(existing["patient_id"], {k: v for k, v in {**existing, **updates}.items() if k not in {"patient_id", "created_at", "deleted_at"}})
             return {"status": "updated", "partial_info": bool(updated.get("partial_info", False)), "patient": updated, "existing_record": True}
 
         cleaned["patient_id"] = str(uuid.uuid4())

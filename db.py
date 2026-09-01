@@ -76,7 +76,7 @@ async def fetch_patient_by_phone(phone_number: str) -> List[Dict[str, Any]]:
                     FROM patients
                     WHERE phone_number = :phone_number
                       AND deleted_at IS NULL
-                    LIMIT 1
+                    ORDER BY created_at ASC
                     """
                 ),
                 {"phone_number": normalized_phone},
